@@ -19,6 +19,29 @@ npm run preview  # serve the production build
 npm run lint     # oxlint
 ```
 
+## Supabase data migrations
+
+Product archiving requires the `archived_at` column on `public.products`.
+Apply `supabase/migrations/20261101000000_add_product_archiving.sql` to the
+Supabase project before using the catalog archive. Active catalog queries
+exclude archived products; the archive view supports restoring them or
+permanently deleting them.
+
+Product galleries require the `image_urls` text array on `public.products`.
+Apply `supabase/migrations/20261101000002_add_product_image_gallery.sql` to
+Supabase. The migration copies existing `image_url` values into the gallery.
+For the non-Supabase REST API, the product endpoints must also accept and return
+`image_urls`.
+
+Review voting requires `public.review_votes`; apply
+`supabase/migrations/20261101000001_add_review_votes.sql`. Review authors can
+edit or delete their own reviews, and each browser identity can change or
+remove its vote. The app uses anonymous client-generated identities rather
+than authenticated accounts, so vote identity is not fraud-proof.
+
+Product inquiry buttons open WhatsApp using the seller number configured in
+`src/config/contact.js`.
+
 ## Structure
 
 ```

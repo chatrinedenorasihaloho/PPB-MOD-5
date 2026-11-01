@@ -53,6 +53,7 @@ export default function FavoritesPage({ onSelectGun, onNavigateCatalog }) {
           id,
           name: fav.name || 'Hardware item',
           type: fav.category || 'Hardware',
+          image_urls: fav.image_urls || [fav.image_url || '/guns/pistol.svg'],
           image_url: fav.image_url || '/guns/pistol.svg',
           price: fav.cook_time || 0,
         })

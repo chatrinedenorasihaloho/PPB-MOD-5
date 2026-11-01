@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import gunService from '../services/gunService'
+import { fetchQuery, getCachedQuery } from '../utils/queryCache'
 
 // ---------------------------------------------------------------------------
 // useGuns — fetch the paginated / filtered product list from the API.
@@ -10,20 +11,24 @@ import gunService from '../services/gunService'
 // ---------------------------------------------------------------------------
 
 export function useGuns(params = {}) {
-  const [guns, setGuns] = useState([])
-  const [loading, setLoading] = useState(true)
+  const queryKey = `guns:list:${JSON.stringify(params)}`
+  const cachedResult = getCachedQuery(queryKey)
+  const [guns, setGuns] = useState(() => cachedResult?.data || [])
+  const [loading, setLoading] = useState(() => cachedResult === undefined)
   const [error, setError] = useState(null)
-  const [pagination, setPagination] = useState(null)
-
-  // Serialise params so the effect re-runs when they change.
+  const [pagination, setPagination] = useState(() => cachedResult?.pagination || null)
   const paramKey = JSON.stringify(params)
 
-  const fetchGuns = useCallback(async () => {
+  const fetchGuns = useCallback(async (force = false) => {
     try {
-      setLoading(true)
+      if (force || getCachedQuery(queryKey) === undefined) setLoading(true)
       setError(null)
 
-      const response = await gunService.getGuns(params)
+      const response = await fetchQuery(
+        queryKey,
+        () => gunService.getGuns(params),
+        { force, shouldCache: (result) => result.success },
+      )
 
       if (response.success) {
         setGuns(response.data || [])
@@ -37,14 +42,15 @@ export function useGuns(params = {}) {
     } finally {
       setLoading(false)
     }
+    // Params are keyed by their serialized value because callers may create a new object each render.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [paramKey])
+  }, [queryKey, paramKey])
 
   useEffect(() => {
     fetchGuns()
   }, [fetchGuns])
 
-  return { guns, loading, error, pagination, refetch: fetchGuns }
+  return { guns, loading, error, pagination, refetch: () => fetchGuns(true) }
 }
 
 // ---------------------------------------------------------------------------
@@ -54,20 +60,26 @@ export function useGuns(params = {}) {
 // ---------------------------------------------------------------------------
 
 export function useGunById(id) {
-  const [gun, setGun] = useState(null)
-  const [loading, setLoading] = useState(true)
+  const queryKey = `guns:detail:${id}`
+  const cachedResult = getCachedQuery(queryKey)
+  const [gun, setGun] = useState(() => cachedResult?.data || null)
+  const [loading, setLoading] = useState(() => Boolean(id) && cachedResult === undefined)
   const [error, setError] = useState(null)
 
-  const fetchGun = useCallback(async () => {
+  const fetchGun = useCallback(async (force = false) => {
     if (!id) {
       setLoading(false)
       return
     }
     try {
-      setLoading(true)
+      if (force || getCachedQuery(queryKey) === undefined) setLoading(true)
       setError(null)
 
-      const response = await gunService.getGunById(id)
+      const response = await fetchQuery(
+        queryKey,
+        () => gunService.getGunById(id),
+        { force, shouldCache: (result) => result.success },
+      )
 
       if (response.success) {
         setGun(response.data)
@@ -80,11 +92,11 @@ export function useGunById(id) {
     } finally {
       setLoading(false)
     }
-  }, [id])
+  }, [id, queryKey])
 
   useEffect(() => {
     fetchGun()
   }, [fetchGun])
 
-  return { gun, loading, error, refetch: fetchGun }
+  return { gun, loading, error, refetch: () => fetchGun(true) }
 }

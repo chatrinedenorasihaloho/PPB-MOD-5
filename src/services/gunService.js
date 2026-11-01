@@ -1,4 +1,5 @@
 import { apiClient, IS_SUPABASE } from '../config/api'
+import { invalidateQueryCache } from '../utils/queryCache'
 
 // ---------------------------------------------------------------------------
 // Normalizer — standardizes product shape whether received from Supabase
@@ -37,18 +38,27 @@ export const normalizeProduct = (item) => {
     Array.isArray(item.steps) && item.steps.length > 0
       ? item.steps
       : ['Verify firearm is completely unloaded and point in safe direction.', 'Inspect receiver and mechanism for maintenance.']
+  const imageUrls = Array.isArray(item.image_urls)
+    ? item.image_urls.filter((url) => typeof url === 'string' && url.length > 0)
+    : []
+  if (imageUrls.length === 0) {
+    const imageUrl = item.image_url || item.image
+    if (imageUrl) imageUrls.push(imageUrl)
+  }
 
   return {
     ...item,
     id: item.id,
+    archived_at: item.archived_at || null,
     name: item.name || 'Hardware Piece',
     type: item.type || item.category || 'Hardware',
     category: item.type || item.category || 'Hardware',
     caliber: item.caliber || 'Standard',
     price: Number(item.price ?? item.cook_time ?? 0),
     description: item.description || '',
-    image_url: item.image_url || item.image || '/guns/pistol.svg',
-    image: item.image_url || item.image || '/guns/pistol.svg',
+    image_urls: imageUrls.length > 0 ? imageUrls : ['/guns/pistol.svg'],
+    image_url: imageUrls[0] || '/guns/pistol.svg',
+    image: imageUrls[0] || '/guns/pistol.svg',
     ingredients: specsList,
     steps: stepsList,
   }
@@ -65,7 +75,10 @@ class GunService {
    */
   async getGuns(params = {}) {
     if (IS_SUPABASE) {
-      const queryParts = ['select=*']
+      const queryParts = [
+        'select=*',
+        `archived_at=${params.archived ? 'not.is.null' : 'is.null'}`,
+      ]
 
       if (params.search) {
         queryParts.push(`name=ilike.*${encodeURIComponent(params.search)}*`)
@@ -140,16 +153,20 @@ class GunService {
         price: Number(data.price ?? data.cook_time ?? 0),
         description: data.description || '',
         specs: specsArray,
-        image_url: data.image_url || null,
+        image_urls: Array.isArray(data.image_urls) ? data.image_urls : [],
+        image_url: data.image_url || data.image_urls?.[0] || null,
       }
 
       const res = await apiClient.post('/rest/v1/products', payload, {
         headers: { Prefer: 'return=representation' },
       })
       const created = Array.isArray(res) ? res[0] : res
+      invalidateQueryCache('guns:')
       return { success: true, data: normalizeProduct(created) }
     }
-    return apiClient.post('/api/v1/recipes', data)
+    const response = await apiClient.post('/api/v1/recipes', data)
+    invalidateQueryCache('guns:')
+    return response
   }
 
   /**
@@ -174,15 +191,19 @@ class GunService {
       }
       if (data.description !== undefined) payload.description = data.description
       if (specsArray !== undefined) payload.specs = specsArray
+      if (data.image_urls !== undefined) payload.image_urls = data.image_urls
       if (data.image_url !== undefined) payload.image_url = data.image_url
 
       const res = await apiClient.patch(`/rest/v1/products?id=eq.${id}`, payload, {
         headers: { Prefer: 'return=representation' },
       })
       const updated = Array.isArray(res) ? res[0] : res
+      invalidateQueryCache('guns:')
       return { success: true, data: normalizeProduct(updated) }
     }
-    return apiClient.put(`/api/v1/recipes/${id}`, data)
+    const response = await apiClient.put(`/api/v1/recipes/${id}`, data)
+    invalidateQueryCache('guns:')
+    return response
   }
 
   /**
@@ -196,14 +217,70 @@ class GunService {
   }
 
   /**
-   * Delete product.
+   * Archive product without removing its data.
    */
-  async deleteGun(id) {
+  async archiveGun(id) {
+    return this.setArchivedAt(id, new Date().toISOString())
+  }
+
+  /**
+   * Restore an archived product.
+   */
+  async restoreGun(id) {
+    return this.setArchivedAt(id, null)
+  }
+
+  async setArchivedAt(id, archivedAt) {
     if (IS_SUPABASE) {
-      await apiClient.delete(`/rest/v1/products?id=eq.${id}`)
+      const currentArchiveState = archivedAt === null ? 'not.is.null' : 'is.null'
+      const result = await apiClient.patch(
+        `/rest/v1/products?id=eq.${encodeURIComponent(id)}&archived_at=${currentArchiveState}`,
+        { archived_at: archivedAt },
+        { headers: { Prefer: 'return=representation' } },
+      )
+      if (!Array.isArray(result) || result.length === 0) {
+        throw new Error('Product was not updated. It may already have this archive state, or your Supabase permissions may prevent the change.')
+      }
+      invalidateQueryCache('guns:')
+      return { success: true, data: normalizeProduct(result[0]) }
+    }
+    if (String(id).startsWith('local-')) {
+      throw new Error('Local catalog products cannot be archived on the server.')
+    }
+    const response = await apiClient.patch(
+      `/api/v1/recipes/${encodeURIComponent(id)}`,
+      { archived_at: archivedAt },
+    )
+    invalidateQueryCache('guns:')
+    return response
+  }
+
+  /**
+   * Permanently remove a product. Use only from the archive view.
+   */
+  async permanentlyDeleteGun(id) {
+    if (IS_SUPABASE) {
+      const result = await apiClient.delete(
+        `/rest/v1/products?id=eq.${encodeURIComponent(id)}&archived_at=not.is.null`,
+        { headers: { Prefer: 'return=representation' } },
+      )
+      if (!Array.isArray(result) || result.length === 0) {
+        throw new Error('Only archived products can be permanently deleted. Check its ID and your Supabase permissions.')
+      }
+      invalidateQueryCache('guns:')
       return { success: true }
     }
-    return apiClient.delete(`/api/v1/recipes/${id}`)
+    if (String(id).startsWith('local-')) {
+      throw new Error('Local catalog products cannot be permanently deleted.')
+    }
+    const response = await apiClient.delete(`/api/v1/recipes/${encodeURIComponent(id)}`)
+    invalidateQueryCache('guns:')
+    return response
+  }
+
+  // Keep the previous service method as a permanent-delete alias for callers outside this catalog flow.
+  async deleteGun(id) {
+    return this.permanentlyDeleteGun(id)
   }
 }
 

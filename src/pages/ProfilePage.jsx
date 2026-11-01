@@ -1,164 +1,118 @@
 import { useState } from 'react'
 import {
-  Shield,
-  Copy,
   Check,
-  Save,
-  Heart,
+  Copy,
   FileText,
-  Camera,
+  Heart,
   Play,
+  Shield,
+  Trash2,
+  UserRoundPen,
 } from 'lucide-react'
 import userService from '../services/userService'
 import { useFavorites } from '../hooks/useFavorites'
+import About from './About'
+import Contact from './Contact'
+import {
+  deleteDraft,
+  formatDraftTime,
+  getAllDraftIds,
+  getDraftTimestamp,
+  loadDraft,
+} from '../utils/draftStorage'
 
-/**
- * Get count of active drafts in localStorage
- */
-const getActiveDraftCount = () => {
-  try {
-    let count = 0
-    for (let i = 0; i < localStorage.length; i++) {
-      const key = localStorage.key(i)
-      if (key && (key.startsWith('bore_barrel_draft_') || key.startsWith('recipe_draft_'))) {
-        count++
+function getDrafts() {
+  return getAllDraftIds()
+    .map((id) => {
+      const data = loadDraft(id)
+      if (!data) return null
+      return {
+        id,
+        title: data.formData?.name?.trim() || (id === 'create' ? 'New catalog item' : 'Untitled item'),
+        type: id === 'create' ? 'New item' : 'Edit item',
+        savedAt: getDraftTimestamp(id) || data.savedAt,
       }
-    }
-    return count
-  } catch {
-    return 0
-  }
+    })
+    .filter(Boolean)
+    .sort((a, b) => new Date(b.savedAt || 0) - new Date(a.savedAt || 0))
 }
 
-/**
- * ProfilePage — User identity and Armory settings.
- * Manages operator profile, identifier, favorites stats, and draft storage.
- */
-export default function ProfilePage({ onReplaySplash }) {
-  const [profile, setProfile] = useState(() => userService.getUserProfile())
-  const [username, setUsername] = useState(profile.username || 'Shooter')
-  const [bio, setBio] = useState(profile.bio || '')
-  const [avatar, setAvatar] = useState(profile.avatar || null)
+export default function ProfilePage({ onReplaySplash, onEditProfile, onResumeDraft }) {
+  const [profile] = useState(() => userService.getUserProfile())
   const [copied, setCopied] = useState(false)
-  const [feedback, setFeedback] = useState('')
-
+  const [drafts, setDrafts] = useState(getDrafts)
+  const [draftError, setDraftError] = useState('')
+  const [profileError, setProfileError] = useState('')
   const { favorites } = useFavorites()
-  const [draftCount] = useState(getActiveDraftCount)
 
-  const handleCopyId = () => {
-    if (profile.userId) {
-      navigator.clipboard.writeText(profile.userId)
+  const handleCopyId = async () => {
+    if (!profile.userId) return
+    try {
+      await navigator.clipboard.writeText(profile.userId)
       setCopied(true)
       setTimeout(() => setCopied(false), 2000)
+    } catch (error) {
+      setProfileError(`Could not copy user ID: ${error.message}`)
     }
   }
 
-  const handleAvatarChange = (e) => {
-    const file = e.target.files[0]
-    if (!file) return
-
-    if (file.size > 2 * 1024 * 1024) {
-      setFeedback('Avatar image must be under 2MB.')
-      setTimeout(() => setFeedback(''), 3000)
+  const handleDeleteDraft = (id) => {
+    if (!deleteDraft(id)) {
+      setDraftError('Could not remove this draft from local storage.')
       return
     }
-
-    const reader = new FileReader()
-    reader.onload = (event) => {
-      const base64 = event.target.result
-      setAvatar(base64)
-      userService.updateAvatar(base64)
-      setFeedback('Avatar updated.')
-      setTimeout(() => setFeedback(''), 3000)
-    }
-    reader.readAsDataURL(file)
-  }
-
-  const handleSaveProfile = (e) => {
-    e.preventDefault()
-    const updated = {
-      ...profile,
-      username: username.trim() || 'Shooter',
-      bio: bio.trim(),
-      avatar,
-    }
-    const result = userService.saveUserProfile(updated)
-    if (result.success) {
-      setProfile(result.data)
-      setFeedback('Profile successfully updated.')
-      setTimeout(() => setFeedback(''), 3000)
-    } else {
-      setFeedback('Failed to save profile.')
-    }
+    setDraftError('')
+    setDrafts(getDrafts())
   }
 
   return (
     <div className="profile-page">
-      <section className="masthead" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '12px' }}>
+      <section className="masthead profile-heading">
         <div>
           <h1 className="display">Operator Profile</h1>
-          <p className="lede">
-            Operator credentials, procurement statistics, and armorer details.
-          </p>
+          <p className="lede">Your profile, saved catalog drafts, and information about Bore &amp; Barrel.</p>
         </div>
-        {onReplaySplash && (
-          <button
-            type="button"
-            className="btn btn--outline btn--sm"
-            onClick={onReplaySplash}
-            title="Replay introductory splash animation"
-          >
-            <Play size={14} /> Replay Intro
-          </button>
-        )}
+        <div className="profile-heading__actions">
+          {onEditProfile && (
+            <button type="button" className="btn btn--primary btn--sm" onClick={onEditProfile}>
+              <UserRoundPen size={15} /> Edit Profile
+            </button>
+          )}
+          {onReplaySplash && (
+            <button
+              type="button"
+              className="btn btn--outline btn--sm"
+              onClick={onReplaySplash}
+              title="Replay introductory splash animation"
+            >
+              <Play size={14} /> Replay Intro
+            </button>
+          )}
+        </div>
       </section>
 
-      {feedback && (
-        <div className="toast toast--success">
-          <Check size={18} /> {feedback}
-        </div>
-      )}
+      {profileError && <p className="form-error" role="alert">{profileError}</p>}
 
-      {/* Operator Card */}
-      <div className="profile-card">
+      <section className="profile-card" aria-label="Profile overview">
         <div className="profile-card-top">
           <div className="avatar-wrap">
-            {avatar ? (
-              <img src={avatar} alt={profile.username} className="avatar-img" />
+            {profile.avatar ? (
+              <img src={profile.avatar} alt={profile.username} className="avatar-img" loading="lazy" decoding="async" />
             ) : (
-              <div className="avatar-placeholder">
-                <Shield size={36} stroke="var(--brass)" />
-              </div>
+              <div className="avatar-placeholder"><Shield size={36} stroke="var(--brass)" /></div>
             )}
-            <label htmlFor="avatar-file-input" className="avatar-upload-btn" title="Upload avatar">
-              <Camera size={14} />
-              <input
-                id="avatar-file-input"
-                type="file"
-                accept="image/*"
-                onChange={handleAvatarChange}
-                className="hidden-file-input"
-              />
-            </label>
           </div>
-
           <div className="profile-identity">
             <h2 className="display">{profile.username || 'Shooter'}</h2>
+            {profile.bio && <p className="profile-bio">{profile.bio}</p>}
             <div className="profile-id-row">
               <span className="mono-badge">{profile.userId}</span>
-              <button
-                type="button"
-                className="icon-btn"
-                onClick={handleCopyId}
-                title="Copy User ID to clipboard"
-              >
+              <button type="button" className="icon-btn" onClick={handleCopyId} title="Copy User ID to clipboard">
                 {copied ? <Check size={14} color="var(--brass)" /> : <Copy size={14} />}
               </button>
             </div>
           </div>
         </div>
-
-        {/* Stats Grid */}
         <div className="profile-stats">
           <div className="stat-item">
             <Heart size={20} className="stat-icon" stroke="var(--brass)" />
@@ -167,48 +121,69 @@ export default function ProfilePage({ onReplaySplash }) {
           </div>
           <div className="stat-item">
             <FileText size={20} className="stat-icon" stroke="var(--steel)" />
-            <div className="stat-val">{draftCount}</div>
-            <div className="stat-label">Saved Offline Drafts</div>
+            <div className="stat-val">{drafts.length}</div>
+            <div className="stat-label">Saved Catalog Drafts</div>
           </div>
         </div>
-      </div>
+      </section>
 
-      {/* Profile Form */}
-      <form onSubmit={handleSaveProfile} className="profile-form">
-        <h3 className="section-title">Armorer Details</h3>
-
-        <div className="form-group">
-          <label htmlFor="prof-name" className="form-label">
-            Callsign / Operator Alias
-          </label>
-          <input
-            id="prof-name"
-            type="text"
-            value={username}
-            onChange={(e) => setUsername(e.target.value)}
-            placeholder="e.g. Operator Delta, Master Gunsmith"
-            className="form-input"
-          />
+      <section className="profile-section">
+        <div className="profile-section__heading">
+          <div>
+            <h2 className="section-title">Catalog Drafts</h2>
+            <p className="profile-section__description">Unfinished catalog items saved on this device.</p>
+          </div>
+          <span className="count">{drafts.length} draft{drafts.length !== 1 ? 's' : ''}</span>
         </div>
+        {draftError && <p className="form-error" role="alert">{draftError}</p>}
+        {drafts.length === 0 ? (
+          <div className="state-box profile-empty">
+            <FileText size={28} />
+            <p>You do not have any saved catalog drafts.</p>
+          </div>
+        ) : (
+          <ul className="draft-list">
+            {drafts.map((draft) => (
+              <li className="draft-item" key={draft.id}>
+                <div className="draft-item__details">
+                  <strong>{draft.title}</strong>
+                  <span>{draft.type}{draft.savedAt ? ` · ${formatDraftTime(draft.savedAt)}` : ''}</span>
+                </div>
+                <div className="draft-item__actions">
+                  {onResumeDraft && (
+                    <button
+                      type="button"
+                      className="btn btn--primary btn--sm"
+                      onClick={() => onResumeDraft(draft.id)}
+                    >
+                      Resume
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    className="icon-btn draft-delete"
+                    onClick={() => handleDeleteDraft(draft.id)}
+                    aria-label={`Delete draft ${draft.title}`}
+                    title="Delete draft"
+                  >
+                    <Trash2 size={16} />
+                  </button>
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
 
-        <div className="form-group">
-          <label htmlFor="prof-bio" className="form-label">
-            Armory Notes / Station Bio
-          </label>
-          <textarea
-            id="prof-bio"
-            value={bio}
-            onChange={(e) => setBio(e.target.value)}
-            placeholder="Qualifications, preferred calibers, unit assignment..."
-            rows={3}
-            className="form-textarea"
-          />
-        </div>
+      <section className="profile-section profile-info-section">
+        <h2 className="section-title">About</h2>
+        <About />
+      </section>
 
-        <button type="submit" className="btn btn--primary">
-          <Save size={16} /> Save Armorer Profile
-        </button>
-      </form>
+      <section className="profile-section profile-info-section">
+        <h2 className="section-title">Contact</h2>
+        <Contact />
+      </section>
     </div>
   )
 }
