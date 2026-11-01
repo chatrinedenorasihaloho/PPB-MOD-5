@@ -4,14 +4,18 @@ import axios from 'axios'
 // Base URL & Supabase Key Configuration
 // Read from environment variables (.env)
 // ---------------------------------------------------------------------------
-const BASE_URL = import.meta.env.VITE_API_BASE_URL || ''
+const configuredBaseUrl = import.meta.env.VITE_API_BASE_URL || ''
 const SUPABASE_KEY =
   import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY ||
   import.meta.env.VITE_SUPABASE_ANON_KEY ||
   ''
 
 const IS_SUPABASE =
-  BASE_URL.includes('supabase.co') || Boolean(SUPABASE_KEY)
+  configuredBaseUrl.includes('supabase.co') || Boolean(SUPABASE_KEY)
+
+const BASE_URL = IS_SUPABASE
+  ? configuredBaseUrl.replace(/\/rest\/v1\/?$/i, '').replace(/\/+$/, '')
+  : configuredBaseUrl.replace(/\/+$/, '')
 
 if (!BASE_URL) {
   console.warn(
